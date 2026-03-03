@@ -390,6 +390,17 @@ export OPENAI_BASE_URL=https://your-api-proxy.com/v1  # 可选
 └── logs/                # 日志文件 (由 OpenClaw 管理)
 ```
 
+### Docker 配置兼容说明
+
+- 推荐配置模型与命令行安装保持一致：`env + openclaw.json`
+- Docker 镜像仍保留 `config.yaml.example` 作为历史兼容模板，便于旧用户迁移
+- 若你从旧版 `config.yaml` 升级，建议执行：
+
+```bash
+openclaw doctor --fix
+openclaw plugins update --all
+```
+
 ## 🛡️ 安全建议
 
 > ⚠️ **重要警告**：OpenClaw 需要完全的计算机权限，请务必注意安全！
@@ -464,12 +475,18 @@ sudo apt-get install -y nodejs
 ### Q: 如何更新到最新版本？
 
 ```bash
-# 使用 npm 更新
-npm update -g openclaw
+# 推荐：使用 OpenClaw 官方升级命令
+openclaw update --restart
+
+# 升级后同步更新插件（尤其是渠道插件）
+openclaw plugins update --all
+
+# 如遇配置迁移问题，先运行诊断修复
+openclaw doctor --fix
 
 # 或使用配置菜单
 ./config-menu.sh
-# 选择 [7] 高级设置 → [7] 更新 OpenClaw
+# 选择 [8] 高级设置 → [6] 更新 OpenClaw
 ```
 
 ### Q: 如何备份数据？

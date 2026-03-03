@@ -33,6 +33,20 @@ read_input() {
     read $var_name < "$TTY_INPUT"
 }
 
+# 从 TTY 读取敏感输入（默认不回显）
+read_secret_input() {
+    local prompt="$1"
+    local var_name="$2"
+    echo -en "$prompt"
+    if stty -echo < "$TTY_INPUT" 2>/dev/null; then
+        read $var_name < "$TTY_INPUT"
+        stty echo < "$TTY_INPUT" 2>/dev/null || true
+    else
+        read $var_name < "$TTY_INPUT"
+    fi
+    echo ""
+}
+
 # ================================ 颜色定义 ================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -56,6 +70,9 @@ CONFIG_DIR="$HOME/.openclaw"
 OPENCLAW_ENV="$CONFIG_DIR/env"
 OPENCLAW_JSON="$CONFIG_DIR/openclaw.json"
 BACKUP_DIR="$CONFIG_DIR/backups"
+
+# 飞书插件策略（仅官方插件，支持版本 pin）
+FEISHU_PLUGIN_OFFICIAL="@openclaw/feishu"
 
 # ================================ 工具函数 ================================
 
@@ -240,6 +257,22 @@ check_openclaw_installed() {
     command -v openclaw &> /dev/null
 }
 
+get_gateway_pid() {
+    get_port_pid 18789
+}
+
+get_port_pid() {
+    local port="$1"
+    local pid=""
+    if command -v lsof &> /dev/null; then
+        pid=$(lsof -ti :"$port" 2>/dev/null | head -1)
+    fi
+    if [ -z "$pid" ] && command -v pgrep &> /dev/null; then
+        pid=$(pgrep -f "openclaw gateway" 2>/dev/null | head -1)
+    fi
+    echo "$pid"
+}
+
 # 重启 Gateway 使渠道配置生效
 restart_gateway_for_channel() {
     echo ""
@@ -261,7 +294,8 @@ restart_gateway_for_channel() {
     sleep 2
     
     # 使用端口检测判断服务是否启动成功（更可靠）
-    local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local gateway_pid
+    gateway_pid=$(get_gateway_pid)
     
     if [ -n "$gateway_pid" ]; then
         log_info "Gateway 已重启！(PID: $gateway_pid)"
@@ -284,6 +318,11 @@ restart_gateway_for_channel() {
         echo ""
         echo -e "${CYAN}查看日志: ${WHITE}openclaw logs --follow${NC}"
         echo -e "${CYAN}停止服务: ${WHITE}openclaw gateway stop${NC}"
+        
+        # 渠道状态探针（重启后）
+        echo ""
+        echo -e "${CYAN}━━━ 渠道状态探针 ━━━${NC}"
+        openclaw channels list 2>/dev/null | head -12 | sed 's/^/  /' || echo "  (无法获取渠道状态)"
     else
         log_warn "Gateway 可能未正常启动"
         echo ""
@@ -872,7 +911,8 @@ show_status() {
         echo -e "  ${GREEN}✓${NC} OpenClaw 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
         
         # 使用端口检测判断服务运行状态（更可靠）
-        local status_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+        local status_pid
+        status_pid=$(get_gateway_pid)
         if [ -n "$status_pid" ]; then
             echo -e "  ${GREEN}●${NC} 服务状态: ${GREEN}运行中${NC} (PID: $status_pid)"
         else
@@ -1053,7 +1093,7 @@ config_anthropic() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1169,7 +1209,7 @@ config_openai() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1308,7 +1348,7 @@ config_deepseek() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1424,7 +1464,7 @@ config_kimi() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1633,7 +1673,7 @@ config_openrouter() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1749,7 +1789,7 @@ config_google_gemini() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1815,7 +1855,7 @@ config_azure_openai() {
     echo ""
     
     read -p "$(echo -e "${YELLOW}输入 Azure 端点 URL: ${NC}")" azure_endpoint
-    read -p "$(echo -e "${YELLOW}输入 API Key: ${NC}")" api_key
+    read_secret_input "${YELLOW}输入 API Key: ${NC}" api_key
     read -p "$(echo -e "${YELLOW}输入部署名称 (Deployment Name): ${NC}")" deployment_name
     read -p "$(echo -e "${YELLOW}API 版本 (默认: 2024-02-15-preview): ${NC}")" api_version
     api_version=${api_version:-"2024-02-15-preview"}
@@ -1898,7 +1938,7 @@ config_groq() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2014,7 +2054,7 @@ config_mistral() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2112,7 +2152,7 @@ config_xai() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2213,7 +2253,7 @@ config_zai() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2328,7 +2368,7 @@ config_minimax() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2426,7 +2466,7 @@ config_opencode() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2530,7 +2570,7 @@ config_google_gemini_cli() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2631,7 +2671,7 @@ config_google_antigravity() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2956,7 +2996,7 @@ config_slack() {
     print_divider
     echo ""
     
-    read -p "$(echo -e "${YELLOW}输入 Bot Token (xoxb-...): ${NC}")" bot_token
+    read_secret_input "${YELLOW}输入 Bot Token (xoxb-...): ${NC}" bot_token
     read -p "$(echo -e "${YELLOW}输入 App Token (xapp-...): ${NC}")" app_token
     
     if [ -n "$bot_token" ] && [ -n "$app_token" ]; then
@@ -3114,7 +3154,7 @@ config_imessage() {
     press_enter
 }
 
-# 安装飞书插件（使用指定版本 0.1.2，因为新版本有问题）
+# 安装飞书插件（仅官方包）
 install_feishu_plugin() {
     echo -e "${YELLOW}安装飞书插件...${NC}"
     echo ""
@@ -3127,13 +3167,18 @@ install_feishu_plugin() {
         return 0
     fi
     
-    echo -e "${CYAN}正在安装飞书插件 @m1heng-clawd/feishu ...${NC}"
+    local preferred_version="${OPENCLAW_FEISHU_PLUGIN_VERSION:-}"
+    local preferred_spec="$FEISHU_PLUGIN_OFFICIAL"
+    if [ -n "$preferred_version" ]; then
+        preferred_spec="${FEISHU_PLUGIN_OFFICIAL}@${preferred_version}"
+    fi
+    
+    echo -e "${CYAN}正在安装飞书插件 ${preferred_spec} ...${NC}"
     echo ""
     
-    # 使用 openclaw plugins install 安装指定版本
-    # 注意：新版本 0.1.4 有问题（缺少 openclaw.extensions），必须使用 0.1.2
+    # 优先安装官方插件包
     local install_output
-    install_output=$(openclaw plugins install @m1heng-clawd/feishu 2>&1)
+    install_output=$(openclaw plugins install "$preferred_spec" 2>&1)
     local install_exit=$?
     
     # 过滤掉 banner，显示关键信息
@@ -3145,13 +3190,11 @@ install_feishu_plugin() {
         return 0
     else
         echo ""
-        log_error "插件安装失败"
+        log_warn "插件安装失败: $preferred_spec"
+        
         echo ""
-        echo -e "${CYAN}请手动安装:${NC}"
-        echo "  openclaw plugins install @m1heng-clawd/feishu"
-        echo ""
-        echo -e "${YELLOW}⚠️  注意: 必须使用 0.1.2 版本，新版本 0.1.4 有问题${NC}"
-        echo ""
+        log_error "飞书插件安装失败，请手动重试"
+        echo -e "${CYAN}官方插件:${NC} ${WHITE}openclaw plugins install $FEISHU_PLUGIN_OFFICIAL${NC}"
         return 1
     fi
 }
@@ -3209,6 +3252,54 @@ save_feishu_config() {
     return 0
 }
 
+# 飞书配置探针：检查插件、渠道与关键配置项
+probe_feishu_config() {
+    echo ""
+    echo -e "${CYAN}━━━ 飞书配置探针 ━━━${NC}"
+    echo ""
+    
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，无法探针"
+        return 1
+    fi
+    
+    local plugin_ok=false
+    local channel_ok=false
+    
+    if openclaw plugins list 2>/dev/null | grep -qi "feishu"; then
+        plugin_ok=true
+        log_info "飞书插件已安装"
+    else
+        log_warn "飞书插件未在 plugins list 中出现"
+    fi
+    
+    if openclaw channels list 2>/dev/null | grep -qi "feishu"; then
+        channel_ok=true
+        log_info "飞书渠道已注册"
+    else
+        log_warn "飞书渠道未在 channels list 中出现"
+    fi
+    
+    local mode=$(openclaw config get channels.feishu.connectionMode 2>/dev/null || echo "")
+    if [ -n "$mode" ] && [ "$mode" != "undefined" ]; then
+        log_info "连接模式: $mode"
+    else
+        log_warn "未读取到 channels.feishu.connectionMode"
+    fi
+    
+    if [ "$plugin_ok" = true ] && [ "$channel_ok" = true ]; then
+        log_info "飞书配置探针通过"
+        return 0
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}排障建议:${NC}"
+    echo "  1) openclaw doctor --fix"
+    echo "  2) openclaw plugins update --all"
+    echo "  3) openclaw gateway restart"
+    return 1
+}
+
 config_feishu() {
     clear_screen
     print_header
@@ -3217,7 +3308,7 @@ config_feishu() {
     print_divider
     echo ""
     
-    echo -e "${YELLOW}⚠️ 注意: 飞书接入通过社区插件支持${NC}"
+    echo -e "${YELLOW}⚠️ 注意: 飞书接入依赖插件，请优先使用官方插件${NC}"
     echo ""
     
     if ! check_openclaw_installed; then
@@ -3228,7 +3319,7 @@ config_feishu() {
     
     echo -e "${CYAN}飞书接入说明:${NC}"
     echo ""
-    echo -e "  ${WHITE}使用社区插件 @m1heng-clawd/feishu${NC}"
+    echo -e "  ${WHITE}仅使用官方插件 @openclaw/feishu${NC}"
     echo ""
     echo -e "  ${GREEN}✓ 支持 WebSocket 连接（无需公网服务器）${NC}"
     echo -e "  ${GREEN}✓ 支持私聊和群聊${NC}"
@@ -3261,7 +3352,7 @@ config_feishu_app() {
     echo -e "${CYAN}配置步骤:${NC}"
     echo ""
     echo "  ${WHITE}第一步: 安装飞书插件${NC} (自动完成)"
-    echo "    • 安装社区插件 @m1heng-clawd/feishu"
+    echo "    • 安装官方插件 @openclaw/feishu"
     echo ""
     echo "  ${WHITE}第二步: 飞书开放平台创建应用${NC}"
     echo "    1. 访问 https://open.feishu.cn/"
@@ -3335,8 +3426,7 @@ config_feishu_app() {
     echo ""
     echo -en "${YELLOW}输入 App ID: ${NC}"
     read feishu_app_id < "$TTY_INPUT"
-    echo -en "${YELLOW}输入 App Secret: ${NC}"
-    read feishu_app_secret < "$TTY_INPUT"
+    read_secret_input "${YELLOW}输入 App Secret: ${NC}" feishu_app_secret
     
     if [ -z "$feishu_app_id" ] || [ -z "$feishu_app_secret" ]; then
         log_error "App ID 和 App Secret 不能为空"
@@ -3352,6 +3442,7 @@ config_feishu_app() {
     
     if save_feishu_config "$feishu_app_id" "$feishu_app_secret"; then
         log_info "飞书渠道配置成功！"
+        probe_feishu_config || true
     else
         log_warn "配置保存失败，请检查"
     fi
@@ -3481,32 +3572,44 @@ config_security() {
     
     case $choice in
         1)
+            local enable_shell="false"
             if confirm "允许 OpenClaw 执行系统命令？这可能带来安全风险" "n"; then
-                log_info "已启用系统命令执行"
-            else
-                log_info "已禁用系统命令执行"
+                enable_shell="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.enable_shell_commands "$enable_shell" 2>/dev/null || true
+            fi
+            [ "$enable_shell" = "true" ] && log_info "已启用系统命令执行" || log_info "已禁用系统命令执行"
             ;;
         2)
+            local enable_file="false"
             if confirm "允许 OpenClaw 读写文件？" "n"; then
-                log_info "已启用文件访问"
-            else
-                log_info "已禁用文件访问"
+                enable_file="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.enable_file_access "$enable_file" 2>/dev/null || true
+            fi
+            [ "$enable_file" = "true" ] && log_info "已启用文件访问" || log_info "已禁用文件访问"
             ;;
         3)
+            local enable_web="false"
             if confirm "允许 OpenClaw 浏览网络？" "y"; then
-                log_info "已启用网络浏览"
-            else
-                log_info "已禁用网络浏览"
+                enable_web="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.enable_web_browsing "$enable_web" 2>/dev/null || true
+            fi
+            [ "$enable_web" = "true" ] && log_info "已启用网络浏览" || log_info "已禁用网络浏览"
             ;;
         4)
+            local sandbox_mode="false"
             if confirm "启用沙箱模式？(推荐)" "y"; then
-                log_info "已启用沙箱模式"
-            else
-                log_warn "已禁用沙箱模式，请注意安全风险"
+                sandbox_mode="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.sandbox_mode "$sandbox_mode" 2>/dev/null || true
+            fi
+            [ "$sandbox_mode" = "true" ] && log_info "已启用沙箱模式" || log_warn "已禁用沙箱模式，请注意安全风险"
             ;;
         5)
             config_whitelist
@@ -3558,7 +3661,8 @@ manage_service() {
     echo ""
     
     # 使用端口检测判断服务状态（更可靠）
-    local menu_status_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local menu_status_pid
+    menu_status_pid=$(get_gateway_pid)
     if [ -n "$menu_status_pid" ]; then
         echo -e "  当前状态: ${GREEN}● 运行中${NC} (PID: $menu_status_pid)"
     else
@@ -3588,7 +3692,8 @@ manage_service() {
             if command -v openclaw &> /dev/null; then
                 # 先检查服务是否已经在运行（使用端口检测，更可靠）
                 local port=18789
-                local running_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                local running_pid
+                running_pid=$(get_port_pid "$port")
                 
                 if [ -n "$running_pid" ]; then
                     echo -e "${GREEN}✓ 服务已经在运行中！${NC} (PID: $running_pid)"
@@ -3620,14 +3725,15 @@ manage_service() {
                 fi
                 
                 # 检测端口是否被其他进程占用
-                local port_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                local port_pid
+                port_pid=$(get_port_pid "$port")
                 
                 if [ -n "$port_pid" ]; then
                     echo -e "${YELLOW}检测到端口 $port 被其他进程占用 (PID: $port_pid)${NC}"
                     if confirm "是否停止占用端口的进程？" "y"; then
                         openclaw gateway stop > /dev/null 2>&1 || true
                         sleep 1
-                        port_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                        port_pid=$(get_port_pid "$port")
                         if [ -n "$port_pid" ]; then
                             kill -9 $port_pid 2>/dev/null || true
                             sleep 1
@@ -3692,7 +3798,7 @@ manage_service() {
                 local check_count=0
                 while [ $check_count -lt 5 ]; do
                     sleep 1
-                    gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                    gateway_pid=$(get_gateway_pid)
                     if [ -n "$gateway_pid" ]; then
                         break
                     fi
@@ -3761,7 +3867,8 @@ manage_service() {
                 openclaw gateway stop 2>/dev/null || true
                 sleep 1
                 # 使用端口检测判断服务是否已停止（更可靠）
-                local stop_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                local stop_pid
+                stop_pid=$(get_gateway_pid)
                 if [ -z "$stop_pid" ]; then
                     log_info "服务已停止"
                 else
@@ -3792,7 +3899,8 @@ manage_service() {
                 sleep 2
                 
                 # 使用端口检测判断服务是否启动成功（更可靠）
-                local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                local gateway_pid
+                gateway_pid=$(get_gateway_pid)
                 
                 if [ -n "$gateway_pid" ]; then
                     log_info "服务已重启 (PID: $gateway_pid)"
@@ -3914,7 +4022,8 @@ manage_service() {
             fi
             
             # 使用端口检测确保服务已停止
-            local uninstall_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+            local uninstall_pid
+            uninstall_pid=$(get_gateway_pid)
             if [ -n "$uninstall_pid" ]; then
                 log_warn "强制停止服务 (PID: $uninstall_pid)..."
                 kill -9 $uninstall_pid 2>/dev/null || true
@@ -4199,17 +4308,17 @@ configure_custom_provider() {
     # 参数校验
     if [ -z "$model" ]; then
         log_error "模型名称不能为空"
-        return 0
+        return 1
     fi
     
     if [ -z "$api_key" ]; then
         log_error "API Key 不能为空"
-        return 0
+        return 1
     fi
     
     if [ -z "$base_url" ]; then
         log_error "API 地址不能为空"
-        return 0
+        return 1
     fi
     
     log_info "配置自定义 Provider..."
@@ -4454,6 +4563,189 @@ print('Custom provider configured: ' + vars['provider_id'])
 
 # ================================ 高级设置 ================================
 
+backup_runtime_config_for_upgrade() {
+    local backup_root="$HOME/.openclaw-upgrade-backups"
+    mkdir -p "$backup_root"
+    local backup_path="$backup_root/pre_upgrade_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_path"
+    
+    if [ -d "$CONFIG_DIR" ]; then
+        cp -R "$CONFIG_DIR" "$backup_path/config_snapshot" 2>/dev/null || {
+            log_error "创建升级备份失败"
+            return 1
+        }
+    fi
+    
+    echo "$backup_path"
+    return 0
+}
+
+restore_runtime_config_backup() {
+    local backup_path="$1"
+    if [ -z "$backup_path" ] || [ ! -d "$backup_path" ]; then
+        log_error "备份目录无效，无法恢复"
+        return 1
+    fi
+    if [ ! -d "$backup_path/config_snapshot" ]; then
+        log_error "备份快照不存在，无法恢复: $backup_path/config_snapshot"
+        return 1
+    fi
+    
+    mkdir -p "$CONFIG_DIR"
+    cp -R "$backup_path/config_snapshot/." "$CONFIG_DIR/" 2>/dev/null || {
+        log_error "恢复配置备份失败: $backup_path"
+        return 1
+    }
+    
+    log_info "已恢复配置备份: $backup_path"
+    return 0
+}
+
+run_openclaw_upgrade_pipeline() {
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
+        return 1
+    fi
+    
+    local before_version
+    before_version=$(openclaw --version 2>/dev/null || echo "unknown")
+    log_info "当前版本: $before_version"
+    
+    local upgrade_log="$BACKUP_DIR/upgrade_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$BACKUP_DIR"
+    {
+        echo "=== OpenClaw Upgrade Log ==="
+        echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Before Version: $before_version"
+    } >> "$upgrade_log"
+    
+    local backup_path
+    backup_path=$(backup_runtime_config_for_upgrade) || return 1
+    log_info "升级备份: $backup_path"
+    echo "Backup Path: $backup_path" >> "$upgrade_log"
+    
+    local update_output=""
+    local updated=false
+    
+    # 官方推荐升级命令
+    if update_output=$(openclaw update --restart 2>&1); then
+        updated=true
+        log_info "OpenClaw 核心升级成功（openclaw update --restart）"
+        {
+            echo ""
+            echo "[core-update] openclaw update --restart"
+            echo "$update_output"
+        } >> "$upgrade_log"
+    else
+        log_warn "openclaw update --restart 失败，尝试 npm 回退升级"
+        echo "$update_output" | head -8 | sed 's/^/  /'
+        {
+            echo ""
+            echo "[core-update-failed] openclaw update --restart"
+            echo "$update_output"
+        } >> "$upgrade_log"
+        
+        if update_output=$(npm update -g openclaw 2>&1); then
+            updated=true
+            log_warn "已使用 npm update -g openclaw 完成回退升级"
+            {
+                echo ""
+                echo "[core-update-fallback] npm update -g openclaw"
+                echo "$update_output"
+            } >> "$upgrade_log"
+        else
+            log_error "核心升级失败"
+            echo "$update_output" | head -8 | sed 's/^/  /'
+            {
+                echo ""
+                echo "[core-update-fallback-failed] npm update -g openclaw"
+                echo "$update_output"
+            } >> "$upgrade_log"
+            restore_runtime_config_backup "$backup_path" || true
+            return 1
+        fi
+    fi
+    
+    if [ "$updated" != true ]; then
+        log_error "升级状态未知，已中止"
+        restore_runtime_config_backup "$backup_path" || true
+        return 1
+    fi
+    
+    # 升级后按官方链路执行 doctor
+    log_info "运行 doctor 迁移与修复..."
+    local doctor_output=""
+    if openclaw doctor --help 2>/dev/null | grep -q -- "--non-interactive"; then
+        if ! doctor_output=$(openclaw doctor --non-interactive 2>&1); then
+            log_error "doctor 失败"
+            {
+                echo ""
+                echo "[doctor-failed] openclaw doctor --non-interactive"
+                echo "$doctor_output"
+            } >> "$upgrade_log"
+            restore_runtime_config_backup "$backup_path" || true
+            return 1
+        fi
+        {
+            echo ""
+            echo "[doctor] openclaw doctor --non-interactive"
+            echo "$doctor_output"
+        } >> "$upgrade_log"
+    else
+        if ! doctor_output=$(yes | openclaw doctor --fix 2>&1); then
+            log_error "doctor --fix 失败"
+            {
+                echo ""
+                echo "[doctor-failed] yes | openclaw doctor --fix"
+                echo "$doctor_output"
+            } >> "$upgrade_log"
+            restore_runtime_config_backup "$backup_path" || true
+            return 1
+        fi
+        {
+            echo ""
+            echo "[doctor] yes | openclaw doctor --fix"
+            echo "$doctor_output"
+        } >> "$upgrade_log"
+    fi
+    
+    # 升级后统一更新插件
+    log_info "更新插件..."
+    local plugins_output=""
+    if ! plugins_output=$(openclaw plugins update --all 2>&1); then
+        log_warn "plugins update --all 执行失败，请稍后手动执行"
+        {
+            echo ""
+            echo "[plugins-update-failed] openclaw plugins update --all"
+            echo "$plugins_output"
+        } >> "$upgrade_log"
+    else
+        {
+            echo ""
+            echo "[plugins-update] openclaw plugins update --all"
+            echo "$plugins_output"
+        } >> "$upgrade_log"
+    fi
+    
+    # 健康检查
+    if openclaw health >/dev/null 2>&1; then
+        log_info "健康检查通过"
+    else
+        log_warn "健康检查未通过，请运行 openclaw health / openclaw logs 排查"
+    fi
+    
+    local after_version
+    after_version=$(openclaw --version 2>/dev/null || echo "unknown")
+    log_info "升级完成: $before_version -> $after_version"
+    {
+        echo ""
+        echo "After Version: $after_version"
+        echo "Result: success"
+    } >> "$upgrade_log"
+    log_info "升级日志: $upgrade_log"
+    return 0
+}
+
 advanced_settings() {
     clear_screen
     print_header
@@ -4523,9 +4815,8 @@ advanced_settings() {
             ;;
         6)
             echo ""
-            log_info "正在更新 OpenClaw..."
-            npm update -g openclaw
-            log_info "更新完成"
+            log_info "正在执行官方升级链路（core + doctor + plugins）..."
+            run_openclaw_upgrade_pipeline
             ;;
         7)
             if confirm "确定要卸载 OpenClaw 吗？" "n"; then
@@ -4831,7 +5122,7 @@ quick_test_slack() {
     echo -e "${CYAN}请输入 Slack Bot Token 进行测试:${NC}"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}Bot Token (xoxb-...): ${NC}")" bot_token
+    read_secret_input "${YELLOW}Bot Token (xoxb-...): ${NC}" bot_token
     
     if [ -z "$bot_token" ]; then
         log_error "Token 不能为空"
@@ -4901,8 +5192,7 @@ except: print('')
         echo ""
         echo -en "${YELLOW}App ID: ${NC}"
         read app_id < "$TTY_INPUT"
-        echo -en "${YELLOW}App Secret: ${NC}"
-        read app_secret < "$TTY_INPUT"
+            read_secret_input "${YELLOW}App Secret: ${NC}" app_secret
         
         if [ -z "$app_id" ] || [ -z "$app_secret" ]; then
             log_error "App ID 和 App Secret 不能为空"

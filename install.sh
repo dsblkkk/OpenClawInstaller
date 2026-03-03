@@ -102,6 +102,20 @@ read_input() {
     read $var_name < "$TTY_INPUT"
 }
 
+# 从 TTY 读取敏感输入（默认不回显）
+read_secret_input() {
+    local prompt="$1"
+    local var_name="$2"
+    echo -en "$prompt"
+    if stty -echo < "$TTY_INPUT" 2>/dev/null; then
+        read $var_name < "$TTY_INPUT"
+        stty echo < "$TTY_INPUT" 2>/dev/null || true
+    else
+        read $var_name < "$TTY_INPUT"
+    fi
+    echo ""
+}
+
 confirm() {
     local message="$1"
     local default="${2:-y}"
@@ -171,6 +185,22 @@ check_root() {
 
 check_command() {
     command -v "$1" &> /dev/null
+}
+
+get_gateway_pid() {
+    get_port_pid 18789
+}
+
+get_port_pid() {
+    local port="$1"
+    local pid=""
+    if check_command lsof; then
+        pid=$(lsof -ti :"$port" 2>/dev/null | head -1)
+    fi
+    if [ -z "$pid" ] && check_command pgrep; then
+        pid=$(pgrep -f "openclaw gateway" 2>/dev/null | head -1)
+    fi
+    echo "$pid"
 }
 
 install_homebrew() {
@@ -443,10 +473,13 @@ EOF
             source "$env_file"
             
             # 设置默认模型（显示错误信息以便调试）
-            # 添加 || true 防止 set -e 导致脚本退出
             local set_result
-            set_result=$(openclaw models set "$openclaw_model" 2>&1) || true
-            local set_exit=$?
+            local set_exit=0
+            if set_result=$(openclaw models set "$openclaw_model" 2>&1); then
+                set_exit=0
+            else
+                set_exit=$?
+            fi
             
             if [ $set_exit -eq 0 ]; then
                 log_info "默认模型已设置为: $openclaw_model"
@@ -478,17 +511,17 @@ configure_custom_provider() {
     # 参数校验
     if [ -z "$model" ]; then
         log_error "模型名称不能为空"
-        return 0  # 返回 0 防止 set -e 退出
+        return 1
     fi
     
     if [ -z "$api_key" ]; then
         log_error "API Key 不能为空"
-        return 0
+        return 1
     fi
     
     if [ -z "$base_url" ]; then
         log_error "API 地址不能为空"
-        return 0
+        return 1
     fi
     
     log_step "配置自定义 Provider..."
@@ -884,7 +917,7 @@ setup_ai_provider() {
             echo ""
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方 API): ${NC}"; read BASE_URL < "$TTY_INPUT"
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo "选择模型:"
             echo "  1) claude-sonnet-4-5-20250929 (推荐)"
@@ -909,7 +942,7 @@ setup_ai_provider() {
             echo ""
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方 API): ${NC}"; read BASE_URL < "$TTY_INPUT"
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo "选择模型:"
             echo "  1) gpt-5 (推荐)"
@@ -949,7 +982,7 @@ setup_ai_provider() {
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方 API): ${NC}"; read BASE_URL < "$TTY_INPUT"
             BASE_URL=${BASE_URL:-"https://api.deepseek.com"}
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo "选择模型:"
             echo "  1) deepseek-chat (V3.2, 推荐)"
@@ -973,7 +1006,7 @@ setup_ai_provider() {
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方 API): ${NC}"; read BASE_URL < "$TTY_INPUT"
             BASE_URL=${BASE_URL:-"https://api.moonshot.cn/v1"}
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo "选择模型:"
             echo "  1) moonshot-v1-auto (自动, 推荐)"
@@ -996,7 +1029,7 @@ setup_ai_provider() {
             echo -e "${CYAN}配置 Google Gemini${NC}"
             echo -e "${GRAY}获取 API Key: https://aistudio.google.com/apikey${NC}"
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方): ${NC}"; read BASE_URL < "$TTY_INPUT"
             echo ""
@@ -1019,7 +1052,7 @@ setup_ai_provider() {
             echo -e "${CYAN}配置 OpenRouter${NC}"
             echo -e "${GRAY}获取 API Key: https://openrouter.ai/${NC}"
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方): ${NC}"; read BASE_URL < "$TTY_INPUT"
             BASE_URL=${BASE_URL:-"https://openrouter.ai/api/v1"}
@@ -1043,7 +1076,7 @@ setup_ai_provider() {
             echo -e "${CYAN}配置 Groq${NC}"
             echo -e "${GRAY}获取 API Key: https://console.groq.com/${NC}"
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方): ${NC}"; read BASE_URL < "$TTY_INPUT"
             BASE_URL=${BASE_URL:-"https://api.groq.com/openai/v1"}
@@ -1067,7 +1100,7 @@ setup_ai_provider() {
             echo -e "${CYAN}配置 Mistral AI${NC}"
             echo -e "${GRAY}获取 API Key: https://console.mistral.ai/${NC}"
             echo ""
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             echo ""
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方): ${NC}"; read BASE_URL < "$TTY_INPUT"
             BASE_URL=${BASE_URL:-"https://api.mistral.ai/v1"}
@@ -1113,7 +1146,7 @@ setup_ai_provider() {
             echo ""
             echo -e "${CYAN}配置 Anthropic Claude${NC}"
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方): ${NC}"; read BASE_URL < "$TTY_INPUT"
-            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            read_secret_input "${YELLOW}输入 API Key: ${NC}" AI_KEY
             AI_MODEL="claude-sonnet-4-20250514"
             ;;
     esac
@@ -1161,18 +1194,21 @@ test_api_connection() {
         local exit_code
         
         # 使用 timeout 命令（如果可用），否则直接运行
-        # 注意：添加 || true 防止 set -e 导致脚本退出
         if command -v timeout &> /dev/null; then
-            result=$(timeout 30 openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
-            exit_code=${PIPESTATUS[0]}
-            # 如果 exit_code 为空，从 $? 获取（兼容不同 shell）
-            [ -z "$exit_code" ] && exit_code=$?
+            if result=$(timeout 30 openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1); then
+                exit_code=0
+            else
+                exit_code=$?
+            fi
             if [ "$exit_code" = "124" ]; then
                 result="测试超时（30秒）"
             fi
         else
-            result=$(openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
-            exit_code=$?
+            if result=$(openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1); then
+                exit_code=0
+            else
+                exit_code=$?
+            fi
         fi
         
         # 过滤掉 Node.js 警告信息和正常的系统日志
@@ -1337,7 +1373,7 @@ After=network.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=$(which openclaw) start --daemon
+ExecStart=$(which openclaw) gateway start
 Restart=on-failure
 RestartSec=10
 
@@ -1365,8 +1401,8 @@ setup_launchd() {
     <key>ProgramArguments</key>
     <array>
         <string>$(which openclaw)</string>
+        <string>gateway</string>
         <string>start</string>
-        <string>--daemon</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -1426,7 +1462,8 @@ start_openclaw_service() {
     fi
     
     # 使用端口检测判断是否已有服务在运行（更可靠）
-    local existing_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local existing_pid
+    existing_pid=$(get_gateway_pid)
     if [ -n "$existing_pid" ]; then
         log_warn "OpenClaw Gateway 已在运行 (PID: $existing_pid)"
         echo ""
@@ -1461,7 +1498,8 @@ start_openclaw_service() {
     sleep 3
     
     # 使用端口检测判断服务是否启动成功（更可靠）
-    local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local gateway_pid
+    gateway_pid=$(get_gateway_pid)
     if [ -n "$gateway_pid" ]; then
         echo ""
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
