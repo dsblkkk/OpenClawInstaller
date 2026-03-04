@@ -2,11 +2,10 @@
 # OpenClaw Docker Compose 配置
 # 
 # 使用方法:
-#   1. 推荐使用 ~/.openclaw/env + ~/.openclaw/openclaw.json（与命令行安装一致）
-#   2. 旧版用户可继续使用 ~/.openclaw/config.yaml（兼容模式）
-#   3. 运行: docker-compose up -d
-#   4. 升级后建议: openclaw doctor --fix && openclaw plugins update --all
-#   5. 查看日志: docker-compose logs -f
+#   1. 使用 ~/.openclaw/env + ~/.openclaw/openclaw.json（与命令行安装一致）
+#   2. 运行: docker-compose up -d
+#   3. 升级后建议: openclaw update --restart && openclaw doctor --fix && openclaw plugins update --all
+#   4. 查看日志: docker-compose logs -f
 # ============================================================
 
 version: '3.8'

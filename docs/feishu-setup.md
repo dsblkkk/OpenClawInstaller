@@ -78,6 +78,13 @@ bash ~/.openclaw/config-menu.sh
 3. 按提示输入 **App ID** 和 **App Secret**
 4. 配置完成后选择「是」重启 Gateway
 
+配置菜单会按官方结构写入：
+
+```bash
+openclaw config set channels.feishu.accounts.main.appId "<APP_ID>"
+openclaw config set channels.feishu.accounts.main.appSecret "<APP_SECRET>"
+```
+
 ### 第七步：配置事件订阅（长连接）
 
 > ⚠️ **重要**: 此步骤需要 OpenClaw 服务已启动，否则无法保存长连接设置。
@@ -207,8 +214,8 @@ openclaw config set channels.feishu.domain "lark"
 - [飞书开放平台](https://open.feishu.cn/)
 - [飞书开放平台文档](https://open.feishu.cn/document/)
 - [OpenClaw 主仓库](https://github.com/openclaw/openclaw)
-- [安装工具仓库](https://github.com/miaoxworld/OpenClawInstaller)
+- [安装工具仓库](https://github.com/leecyno1/auto-install-Openclaw)
 
 ---
 
-如有问题，请在 [GitHub Issues](https://github.com/miaoxworld/OpenClawInstaller/issues) 中反馈。
+如有问题，请在 [GitHub Issues](https://github.com/leecyno1/auto-install-Openclaw/issues) 中反馈。

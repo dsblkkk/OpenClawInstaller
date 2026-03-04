@@ -5,13 +5,13 @@
 # ║   🦞 OpenClaw 一键部署脚本 v1.0.0                                          ║
 # ║   智能 AI 助手部署工具 - 支持多平台多模型                                    ║
 # ║                                                                           ║
-# ║   GitHub: https://github.com/miaoxworld/OpenClawInstaller                 ║
-# ║   官方文档: https://clawd.bot/docs                                         ║
+# ║   GitHub: https://github.com/leecyno1/auto-install-Openclaw               ║
+# ║   官方文档: https://docs.openclaw.ai                                       ║
 # ║                                                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # 使用方法:
-#   curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/leecyno1/auto-install-Openclaw/main/install.sh | bash
 #   或本地执行: chmod +x install.sh && ./install.sh
 #
 
@@ -24,7 +24,11 @@ if [ -t 0 ]; then
     TTY_INPUT="/dev/stdin"
 else
     # stdin 是管道，使用 /dev/tty
-    TTY_INPUT="/dev/tty"
+    if [ -e /dev/tty ]; then
+        TTY_INPUT="/dev/tty"
+    else
+        TTY_INPUT="/dev/null"
+    fi
 fi
 
 # ================================ 颜色定义 ================================
@@ -39,11 +43,44 @@ GRAY='\033[0;90m'
 NC='\033[0m' # 无颜色
 
 # ================================ 配置变量 ================================
-OPENCLAW_VERSION="latest"
+# 兼容旧环境变量命名（clawdbot -> openclaw）
+map_legacy_env() {
+    local new_key="$1"
+    local legacy_key="$2"
+    if [ -z "${!new_key:-}" ] && [ -n "${!legacy_key:-}" ]; then
+        export "$new_key=${!legacy_key}"
+    fi
+}
+
+map_legacy_env "OPENCLAW_NO_ONBOARD" "CLAWDBOT_NO_ONBOARD"
+map_legacy_env "OPENCLAW_NO_PROMPT" "CLAWDBOT_NO_PROMPT"
+map_legacy_env "OPENCLAW_DRY_RUN" "CLAWDBOT_DRY_RUN"
+map_legacy_env "OPENCLAW_INSTALL_METHOD" "CLAWDBOT_INSTALL_METHOD"
+map_legacy_env "OPENCLAW_VERSION" "CLAWDBOT_VERSION"
+map_legacy_env "OPENCLAW_BETA" "CLAWDBOT_BETA"
+map_legacy_env "OPENCLAW_GIT_DIR" "CLAWDBOT_GIT_DIR"
+map_legacy_env "OPENCLAW_GIT_UPDATE" "CLAWDBOT_GIT_UPDATE"
+map_legacy_env "OPENCLAW_VERBOSE" "CLAWDBOT_VERBOSE"
+
+OPENCLAW_VERSION="${OPENCLAW_VERSION:-latest}"
 CONFIG_DIR="$HOME/.openclaw"
-MIN_NODE_VERSION=22
-GITHUB_REPO="miaoxworld/OpenClawInstaller"
+MIN_NODE_MAJOR=22
+MIN_NODE_MINOR=12
+INSTALLER_NAME="auto-install-Openclaw"
+GITHUB_REPO="${GITHUB_REPO:-leecyno1/auto-install-Openclaw}"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
+OFFICIAL_INSTALL_URL="https://openclaw.ai/install.sh"
+OFFICIAL_DOCS_URL="https://docs.openclaw.ai"
+
+NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-0}"
+NO_PROMPT="${OPENCLAW_NO_PROMPT:-0}"
+DRY_RUN="${OPENCLAW_DRY_RUN:-0}"
+VERBOSE="${OPENCLAW_VERBOSE:-0}"
+INSTALL_METHOD="${OPENCLAW_INSTALL_METHOD:-npm}"
+USE_BETA="${OPENCLAW_BETA:-0}"
+GIT_DIR="${OPENCLAW_GIT_DIR:-$HOME/openclaw}"
+GIT_UPDATE="${OPENCLAW_GIT_UPDATE:-1}"
+HELP=0
 
 # ================================ 工具函数 ================================
 
@@ -94,6 +131,104 @@ spinner() {
     printf "    \b\b\b\b"
 }
 
+print_usage() {
+    cat <<EOF
+${INSTALLER_NAME} (OpenClaw 安装增强版)
+
+用法:
+  curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh | bash -s -- [选项]
+
+选项:
+  --install-method, --method npm|git   安装方式 (默认: npm)
+  --npm                                等价于 --install-method npm
+  --git, --github                      等价于 --install-method git
+  --version <version|dist-tag>         指定 OpenClaw 版本 (默认: latest)
+  --beta                               优先使用 beta dist-tag
+  --git-dir, --dir <path>              git 安装目录 (默认: ~/openclaw)
+  --no-git-update                      禁止更新已有 git checkout
+  --no-onboard                         跳过本脚本 AI 初始化向导
+  --onboard                            强制执行本脚本 AI 初始化向导
+  --no-prompt                          非交互模式（使用默认值）
+  --dry-run                            只显示执行计划，不做变更
+  --verbose                            详细日志
+  --help, -h                           显示帮助
+
+环境变量:
+  OPENCLAW_INSTALL_METHOD=git|npm
+  OPENCLAW_VERSION=latest|next|<semver>
+  OPENCLAW_BETA=0|1
+  OPENCLAW_GIT_DIR=<path>
+  OPENCLAW_GIT_UPDATE=0|1
+  OPENCLAW_NO_ONBOARD=0|1
+  OPENCLAW_NO_PROMPT=0|1
+  OPENCLAW_DRY_RUN=0|1
+  OPENCLAW_VERBOSE=0|1
+EOF
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --install-method|--method)
+                INSTALL_METHOD="$2"
+                shift 2
+                ;;
+            --npm)
+                INSTALL_METHOD="npm"
+                shift
+                ;;
+            --git|--github)
+                INSTALL_METHOD="git"
+                shift
+                ;;
+            --version)
+                OPENCLAW_VERSION="$2"
+                shift 2
+                ;;
+            --beta)
+                USE_BETA=1
+                shift
+                ;;
+            --git-dir|--dir)
+                GIT_DIR="$2"
+                shift 2
+                ;;
+            --no-git-update)
+                GIT_UPDATE=0
+                shift
+                ;;
+            --no-onboard)
+                NO_ONBOARD=1
+                shift
+                ;;
+            --onboard)
+                NO_ONBOARD=0
+                shift
+                ;;
+            --no-prompt)
+                NO_PROMPT=1
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=1
+                shift
+                ;;
+            --verbose)
+                VERBOSE=1
+                shift
+                ;;
+            --help|-h)
+                HELP=1
+                shift
+                ;;
+            *)
+                echo "忽略未知参数: $1"
+                shift
+                ;;
+        esac
+    done
+}
+
 # 从 TTY 读取用户输入（支持 curl | bash 模式）
 read_input() {
     local prompt="$1"
@@ -120,6 +255,11 @@ confirm() {
     local message="$1"
     local default="${2:-y}"
     
+    if [ "$NO_PROMPT" = "1" ] || [ "$TTY_INPUT" = "/dev/null" ]; then
+        [ "$default" = "y" ]
+        return $?
+    fi
+
     if [ "$default" = "y" ]; then
         local prompt="[Y/n]"
     else
@@ -134,6 +274,45 @@ confirm() {
         [yY][eE][sS]|[yY]) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+resolve_beta_version() {
+    npm view openclaw dist-tags.beta 2>/dev/null || true
+}
+
+normalize_install_options() {
+    if [ "$INSTALL_METHOD" != "npm" ] && [ "$INSTALL_METHOD" != "git" ]; then
+        log_error "无效安装方式: $INSTALL_METHOD（仅支持 npm|git）"
+        exit 2
+    fi
+
+    if [ "$USE_BETA" = "1" ]; then
+        local beta_version
+        beta_version="$(resolve_beta_version)"
+        if [ -n "$beta_version" ] && [ "$beta_version" != "undefined" ] && [ "$beta_version" != "null" ]; then
+            OPENCLAW_VERSION="$beta_version"
+            log_info "检测到 beta 版本: $OPENCLAW_VERSION"
+        else
+            log_warn "未找到 beta dist-tag，回退 latest"
+            OPENCLAW_VERSION="latest"
+        fi
+    fi
+}
+
+print_install_plan() {
+    echo ""
+    echo -e "${CYAN}安装计划:${NC}"
+    echo "  - installer: $INSTALLER_NAME"
+    echo "  - install_method: $INSTALL_METHOD"
+    echo "  - openclaw_version: $OPENCLAW_VERSION"
+    echo "  - no_onboard: $NO_ONBOARD"
+    echo "  - no_prompt: $NO_PROMPT"
+    echo "  - dry_run: $DRY_RUN"
+    echo "  - verbose: $VERBOSE"
+    if [ "$INSTALL_METHOD" = "git" ]; then
+        echo "  - git_dir: $GIT_DIR"
+        echo "  - git_update: $GIT_UPDATE"
+    fi
 }
 
 # ================================ 系统检测 ================================
@@ -221,16 +400,19 @@ install_nodejs() {
     log_step "检查 Node.js..."
     
     if check_command node; then
-        local node_version=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-        if [ "$node_version" -ge "$MIN_NODE_VERSION" ]; then
+        local node_major
+        local node_minor
+        node_major=$(node -v | sed 's/^v//' | cut -d'.' -f1)
+        node_minor=$(node -v | sed 's/^v//' | cut -d'.' -f2)
+        if [ "$node_major" -gt "$MIN_NODE_MAJOR" ] || { [ "$node_major" -eq "$MIN_NODE_MAJOR" ] && [ "$node_minor" -ge "$MIN_NODE_MINOR" ]; }; then
             log_info "Node.js 版本满足要求: $(node -v)"
             return 0
         else
-            log_warn "Node.js 版本过低: $(node -v)，需要 v$MIN_NODE_VERSION+"
+            log_warn "Node.js 版本过低: $(node -v)，需要 v${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+"
         fi
     fi
     
-    log_step "安装 Node.js $MIN_NODE_VERSION..."
+    log_step "安装 Node.js ${MIN_NODE_MAJOR}.x ..."
     
     case "$OS" in
         macos)
@@ -250,7 +432,7 @@ install_nodejs() {
             sudo pacman -S nodejs npm --noconfirm
             ;;
         *)
-            log_error "无法自动安装 Node.js，请手动安装 v$MIN_NODE_VERSION+"
+            log_error "无法自动安装 Node.js，请手动安装 v${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+"
             exit 1
             ;;
     esac
@@ -312,6 +494,44 @@ create_directories() {
     log_info "配置目录: $CONFIG_DIR"
 }
 
+install_openclaw_via_official() {
+    local -a args
+    args=(--install-method "$INSTALL_METHOD" --no-onboard)
+
+    if [ "$NO_PROMPT" = "1" ]; then
+        args+=(--no-prompt)
+    fi
+    if [ "$VERBOSE" = "1" ]; then
+        args+=(--verbose)
+    fi
+    if [ "$DRY_RUN" = "1" ]; then
+        args+=(--dry-run)
+    fi
+    if [ "$USE_BETA" = "1" ]; then
+        args+=(--beta)
+    elif [ -n "$OPENCLAW_VERSION" ] && [ "$OPENCLAW_VERSION" != "latest" ]; then
+        args+=(--version "$OPENCLAW_VERSION")
+    fi
+    if [ "$INSTALL_METHOD" = "git" ]; then
+        args+=(--git-dir "$GIT_DIR")
+        if [ "$GIT_UPDATE" = "0" ]; then
+            args+=(--no-git-update)
+        fi
+    fi
+
+    log_info "调用官方安装器以确保核心安装行为与上游一致..."
+    local tmp_script
+    tmp_script="$(mktemp /tmp/openclaw-install.XXXXXX.sh)"
+    if ! curl -fsSL --proto '=https' --tlsv1.2 "$OFFICIAL_INSTALL_URL" -o "$tmp_script"; then
+        rm -f "$tmp_script" 2>/dev/null || true
+        return 1
+    fi
+    bash "$tmp_script" "${args[@]}"
+    local install_exit=$?
+    rm -f "$tmp_script" 2>/dev/null || true
+    return "$install_exit"
+}
+
 install_openclaw() {
     log_step "安装 OpenClaw..."
     
@@ -324,10 +544,15 @@ install_openclaw() {
             return 0
         fi
     fi
-    
-    # 使用 npm 全局安装
-    log_info "正在从 npm 安装 OpenClaw..."
-    npm install -g openclaw@$OPENCLAW_VERSION --unsafe-perm
+
+    if ! install_openclaw_via_official; then
+        if [ "$INSTALL_METHOD" != "npm" ]; then
+            log_error "官方安装器执行失败，且当前为 git 安装模式，无法安全回退"
+            exit 1
+        fi
+        log_warn "官方安装器执行失败，回退到 npm 安装"
+        npm install -g "openclaw@$OPENCLAW_VERSION" --unsafe-perm
+    fi
     
     # 验证安装
     if check_command openclaw; then
@@ -1441,7 +1666,7 @@ print_success() {
     echo "  openclaw channels list   # 查看渠道列表"
     echo "  openclaw doctor          # 诊断问题"
     echo ""
-    echo -e "${PURPLE}📚 官方文档: https://clawd.bot/docs${NC}"
+    echo -e "${PURPLE}📚 官方文档: $OFFICIAL_DOCS_URL${NC}"
     echo -e "${PURPLE}💬 社区支持: https://github.com/$GITHUB_REPO/discussions${NC}"
     echo ""
 }
@@ -1593,12 +1818,25 @@ run_config_menu() {
 # ================================ 主函数 ================================
 
 main() {
+    parse_args "$@"
+    if [ "$HELP" = "1" ]; then
+        print_usage
+        exit 0
+    fi
+    normalize_install_options
+
     print_banner
+    print_install_plan
     
     echo -e "${YELLOW}⚠️  警告: OpenClaw 需要完全的计算机权限${NC}"
     echo -e "${YELLOW}    不建议在主要工作电脑上安装，建议使用专用服务器或虚拟机${NC}"
     echo ""
-    
+
+    if [ "$DRY_RUN" = "1" ]; then
+        log_info "dry-run 模式：仅输出计划，不执行安装"
+        exit 0
+    fi
+
     if ! confirm "是否继续安装？"; then
         echo "安装已取消"
         exit 0
@@ -1610,7 +1848,11 @@ main() {
     install_dependencies
     create_directories
     install_openclaw
-    run_onboard_wizard
+    if [ "$NO_ONBOARD" = "1" ]; then
+        log_info "已按参数跳过 AI 初始化向导 (--no-onboard)"
+    else
+        run_onboard_wizard
+    fi
     setup_daemon
     print_success
     
@@ -1623,22 +1865,6 @@ main() {
         echo "  source ~/.openclaw/env && openclaw gateway"
         echo ""
     fi
-    
-    # 推荐桌面版
-    echo ""
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${WHITE}           🖥️ 推荐：OpenClaw Manager 桌面版${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo -e "${WHITE}如果你更喜欢图形界面，推荐下载 OpenClaw Manager 桌面应用：${NC}"
-    echo ""
-    echo -e "  🎨 ${CYAN}现代化 UI${NC} - 基于 Tauri 2.0 + React + Rust 构建"
-    echo -e "  📊 ${CYAN}实时监控${NC} - 仪表盘查看服务状态、内存、运行时间"
-    echo -e "  🔧 ${CYAN}可视化配置${NC} - AI 模型、消息渠道一键配置"
-    echo -e "  💻 ${CYAN}跨平台${NC} - 支持 macOS、Windows、Linux"
-    echo ""
-    echo -e "  👉 ${PURPLE}下载地址: https://github.com/miaoxworld/openclaw-manager${NC}"
-    echo ""
     
     # 询问是否打开配置菜单进行详细配置
     echo ""

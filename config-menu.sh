@@ -73,6 +73,8 @@ BACKUP_DIR="$CONFIG_DIR/backups"
 
 # 飞书插件策略（仅官方插件，支持版本 pin）
 FEISHU_PLUGIN_OFFICIAL="@openclaw/feishu"
+INSTALLER_REPO="leecyno1/auto-install-Openclaw"
+INSTALLER_RAW_URL="https://raw.githubusercontent.com/${INSTALLER_REPO}/main"
 
 # ================================ 工具函数 ================================
 
@@ -3158,15 +3160,14 @@ config_imessage() {
 install_feishu_plugin() {
     echo -e "${YELLOW}安装飞书插件...${NC}"
     echo ""
-    
-    # 检查是否已安装飞书插件
-    local installed=$(openclaw plugins list 2>/dev/null | grep -i feishu || echo "")
-    
-    if [ -n "$installed" ]; then
-        log_info "飞书插件已安装: $installed"
-        return 0
+
+    # 先清理同名插件，避免历史社区包与官方包冲突
+    if openclaw plugins list 2>/dev/null | grep -qi "feishu"; then
+        log_info "检测到已安装飞书插件，先执行重装清理..."
+        openclaw plugins disable feishu > /dev/null 2>&1 || true
+        openclaw plugins uninstall feishu --keep-files > /dev/null 2>&1 || true
     fi
-    
+
     local preferred_version="${OPENCLAW_FEISHU_PLUGIN_VERSION:-}"
     local preferred_spec="$FEISHU_PLUGIN_OFFICIAL"
     if [ -n "$preferred_version" ]; then
@@ -3176,15 +3177,17 @@ install_feishu_plugin() {
     echo -e "${CYAN}正在安装飞书插件 ${preferred_spec} ...${NC}"
     echo ""
     
-    # 优先安装官方插件包
+    # 仅安装官方插件包，并 pin 版本，降低后续升级漂移风险
     local install_output
-    install_output=$(openclaw plugins install "$preferred_spec" 2>&1)
+    install_output=$(openclaw plugins install "$preferred_spec" --pin 2>&1)
     local install_exit=$?
     
     # 过滤掉 banner，显示关键信息
     echo "$install_output" | grep -v "^🦞" | grep -v "^$" | head -5
     
     if [ $install_exit -eq 0 ]; then
+        openclaw plugins enable feishu > /dev/null 2>&1 || true
+        ensure_plugin_in_allow "feishu"
         echo ""
         log_info "✅ 飞书插件安装成功！"
         return 0
@@ -3218,10 +3221,10 @@ save_feishu_config() {
         log_warn "飞书渠道可能已存在，继续配置..."
     fi
     
-    # 使用 openclaw config set 设置凭证
+    # 使用官方推荐结构写入 credentials（accounts.main）
     echo -e "${YELLOW}配置 App ID...${NC}"
     local set_output
-    set_output=$(openclaw config set channels.feishu.appId "$app_id" 2>&1)
+    set_output=$(openclaw config set channels.feishu.accounts.main.appId "$app_id" 2>&1)
     local set_exit=$?
     
     if [ $set_exit -ne 0 ]; then
@@ -3232,7 +3235,7 @@ save_feishu_config() {
     echo "$set_output" | grep -v "^🦞" | grep -v "^$" | head -1
     
     echo -e "${YELLOW}配置 App Secret...${NC}"
-    set_output=$(openclaw config set channels.feishu.appSecret "$app_secret" 2>&1)
+    set_output=$(openclaw config set channels.feishu.accounts.main.appSecret "$app_secret" 2>&1)
     set_exit=$?
     
     if [ $set_exit -ne 0 ]; then
@@ -3242,11 +3245,10 @@ save_feishu_config() {
     fi
     echo "$set_output" | grep -v "^🦞" | grep -v "^$" | head -1
     
-    # 设置其他默认配置
+    # 保持最小必要配置，避免覆盖用户现有个性化设置
     openclaw config set channels.feishu.enabled true > /dev/null 2>&1 || true
+    openclaw config set channels.feishu.accounts.main.enabled true > /dev/null 2>&1 || true
     openclaw config set channels.feishu.connectionMode websocket > /dev/null 2>&1 || true
-    openclaw config set channels.feishu.domain feishu > /dev/null 2>&1 || true
-    openclaw config set channels.feishu.requireMention true > /dev/null 2>&1 || true
     
     log_info "飞书渠道配置完成"
     return 0
@@ -3391,7 +3393,11 @@ config_feishu_app() {
     echo -e "${WHITE}━━━ 第一步: 安装飞书插件 (自动) ━━━${NC}"
     echo ""
     
-    install_feishu_plugin
+    if ! install_feishu_plugin; then
+        log_error "飞书插件安装失败，已停止后续飞书配置。"
+        press_enter
+        return
+    fi
     
     echo ""
     log_info "✅ 第一步完成！插件已就绪"
@@ -4083,10 +4089,10 @@ manage_service() {
             echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo ""
             echo -e "${CYAN}如需重新安装，请运行:${NC}"
-            echo "  curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash"
+            echo "  curl -fsSL ${INSTALLER_RAW_URL}/install.sh | bash"
             echo ""
-            echo -e "${CYAN}或下载桌面版:${NC}"
-            echo "  https://github.com/miaoxworld/openclaw-manager"
+            echo -e "${CYAN}项目主页:${NC}"
+            echo "  https://github.com/${INSTALLER_REPO}"
             echo ""
             
             press_enter
@@ -5154,13 +5160,13 @@ quick_test_feishu() {
             app_id=$(node -e "
 try {
     const config = JSON.parse(require('fs').readFileSync('$OPENCLAW_JSON', 'utf8'));
-    console.log(config.channels?.feishu?.appId || '');
+    console.log(config.channels?.feishu?.accounts?.main?.appId || config.channels?.feishu?.appId || '');
 } catch (e) { console.log(''); }
 " 2>/dev/null)
             app_secret=$(node -e "
 try {
     const config = JSON.parse(require('fs').readFileSync('$OPENCLAW_JSON', 'utf8'));
-    console.log(config.channels?.feishu?.appSecret || '');
+    console.log(config.channels?.feishu?.accounts?.main?.appSecret || config.channels?.feishu?.appSecret || '');
 } catch (e) { console.log(''); }
 " 2>/dev/null)
         elif command -v python3 &> /dev/null; then
@@ -5169,7 +5175,8 @@ import json
 try:
     with open('$OPENCLAW_JSON', 'r') as f:
         config = json.load(f)
-    print(config.get('channels', {}).get('feishu', {}).get('appId', ''))
+    feishu = config.get('channels', {}).get('feishu', {})
+    print(feishu.get('accounts', {}).get('main', {}).get('appId', feishu.get('appId', '')))
 except: print('')
 " 2>/dev/null)
             app_secret=$(python3 -c "
@@ -5177,7 +5184,8 @@ import json
 try:
     with open('$OPENCLAW_JSON', 'r') as f:
         config = json.load(f)
-    print(config.get('channels', {}).get('feishu', {}).get('appSecret', ''))
+    feishu = config.get('channels', {}).get('feishu', {})
+    print(feishu.get('accounts', {}).get('main', {}).get('appSecret', feishu.get('appSecret', '')))
 except: print('')
 " 2>/dev/null)
         fi

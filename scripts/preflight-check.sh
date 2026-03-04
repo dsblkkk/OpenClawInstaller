@@ -20,11 +20,30 @@ pass "upgrade pipeline markers"
 
 # 3) 飞书官方插件默认检查
 grep -q 'FEISHU_PLUGIN_OFFICIAL="@openclaw/feishu"' config-menu.sh || fail "missing official feishu plugin default"
+grep -q "channels.feishu.accounts.main.appId" config-menu.sh || fail "missing feishu accounts.main.appId config path"
+grep -q 'openclaw plugins install "$preferred_spec" --pin' config-menu.sh || fail "missing pinned official feishu install"
 pass "feishu plugin default marker"
 
-# 4) 文档命令一致性检查
+# 4) 安装器官方兼容关键点
+grep -q -- "--install-method, --method" install.sh || fail "install.sh missing official install-method flag"
+grep -q "OFFICIAL_INSTALL_URL=\"https://openclaw.ai/install.sh\"" install.sh || fail "install.sh missing official installer url"
+grep -q "MIN_NODE_MINOR=12" install.sh || fail "install.sh missing Node 22.12+ floor"
+pass "installer compatibility markers"
+
+# 5) 文档命令一致性检查
 grep -q "openclaw update --restart" README.md || fail "README missing official upgrade command"
 grep -q "openclaw plugins update --all" README.md || fail "README missing plugin update command"
+grep -q "raw.githubusercontent.com/leecyno1/auto-install-Openclaw/main/install.sh" README.md || fail "README missing new one-click url"
 pass "README command markers"
+
+# 6) 独立仓库命名检查（不应再指向旧仓库）
+if rg -n "miaoxworld/OpenClawInstaller|raw.githubusercontent.com/miaoxworld/OpenClawInstaller" README.md install.sh config-menu.sh docs/feishu-setup.md >/dev/null 2>&1; then
+    fail "found legacy upstream repository references"
+fi
+pass "independent repo markers"
+
+# 7) 1:1 清单文档存在性检查
+[ -f docs/official-compatibility-checklist.md ] || fail "missing official compatibility checklist doc"
+pass "compatibility checklist doc"
 
 echo "All preflight checks passed."
