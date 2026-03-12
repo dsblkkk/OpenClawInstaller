@@ -3,7 +3,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║                                                                           ║
 # ║   🦞 OpenClaw 一键部署脚本 v1.0.5                                          ║
-# ║   🔥 Dasheng Brand: Monkey King's Wrath                                   ║
+# ║   🔥 大圣之怒傻瓜Openclaw安装&配置助手                                     ║
 # ║   智能 AI 助手部署工具 - 支持多平台多模型                                    ║
 # ║                                                                           ║
 # ║   GitHub: https://github.com/leecyno1/auto-install-Openclaw               ║
@@ -69,8 +69,6 @@ MIN_NODE_MAJOR=22
 MIN_NODE_MINOR=12
 INSTALLER_NAME="auto-install-Openclaw"
 INSTALLER_VERSION="1.0.5"
-BRAND_NAME="Monkey King's Wrath"
-BRAND_CN_NAME="大圣引擎"
 GITHUB_REPO="${GITHUB_REPO:-leecyno1/auto-install-Openclaw}"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 OFFICIAL_INSTALL_URL="https://openclaw.ai/install.sh"
@@ -93,14 +91,9 @@ HELP=0
 # ================================ 工具函数 ================================
 
 print_banner() {
-    echo -e "${CYAN}"
-    cat << 'EOF'
-╔══════════════════════════════════════════════════════════════════════╗
-║                    OpenClaw Installer / Config                      ║
-╚══════════════════════════════════════════════════════════════════════╝
-EOF
-    echo "🔥 大圣之怒傻瓜Openclaw安装/维护助手 🔥 🔖 Version: v${INSTALLER_VERSION}"
-    echo -e "${NC}"
+    echo -e "${CYAN}🔥 大圣之怒傻瓜Openclaw安装&配置助手 🔥${NC}"
+    echo -e "${CYAN}🔖 Version: v${INSTALLER_VERSION}${NC}"
+    echo ""
 }
 
 print_exit_hint() {
@@ -632,6 +625,141 @@ ensure_openclaw_on_path() {
     done
 }
 
+run_as_root() {
+    if [ "$EUID" -eq 0 ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+get_meminfo_kb() {
+    local key="$1"
+    awk -v k="$key" '$1==k":" {print $2; exit}' /proc/meminfo 2>/dev/null
+}
+
+get_total_mem_mb() {
+    local kb
+    kb="$(get_meminfo_kb MemTotal)"
+    [ -n "$kb" ] && echo $((kb / 1024)) || echo 0
+}
+
+get_total_swap_mb() {
+    local kb
+    kb="$(get_meminfo_kb SwapTotal)"
+    [ -n "$kb" ] && echo $((kb / 1024)) || echo 0
+}
+
+is_low_memory_linux() {
+    [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || return 1
+    local mem_mb swap_mb
+    mem_mb="$(get_total_mem_mb)"
+    swap_mb="$(get_total_swap_mb)"
+    [ "$mem_mb" -lt 1800 ] && [ "$swap_mb" -lt 1024 ]
+}
+
+ensure_swap_for_install() {
+    is_low_memory_linux || return 0
+
+    local mem_mb swap_mb
+    mem_mb="$(get_total_mem_mb)"
+    swap_mb="$(get_total_swap_mb)"
+
+    log_warn "检测到低内存环境（内存 ${mem_mb}MB，Swap ${swap_mb}MB），安装可能被系统 OOM Kill。"
+    if ! check_command swapon || ! check_command mkswap; then
+        log_warn "系统缺少 swapon/mkswap，无法自动启用 Swap。"
+        return 1
+    fi
+
+    if ! confirm "是否自动创建并启用 2G Swap 以提高安装成功率？" "y"; then
+        log_warn "已跳过自动创建 Swap，安装仍可能失败。"
+        return 1
+    fi
+
+    local swap_file="/swapfile.openclaw"
+    local swap_size_mb=2048
+
+    if swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swap_file"; then
+        log_info "检测到已启用 Swap: $swap_file"
+        return 0
+    fi
+
+    if [ ! -f "$swap_file" ]; then
+        if check_command fallocate; then
+            if ! run_as_root fallocate -l "${swap_size_mb}M" "$swap_file"; then
+                run_as_root dd if=/dev/zero of="$swap_file" bs=1M count="$swap_size_mb" status=none
+            fi
+        else
+            run_as_root dd if=/dev/zero of="$swap_file" bs=1M count="$swap_size_mb" status=none
+        fi
+    fi
+
+    run_as_root chmod 600 "$swap_file"
+    run_as_root mkswap "$swap_file" >/dev/null 2>&1 || true
+    run_as_root swapon "$swap_file"
+    log_info "已启用 Swap: $swap_file (2G)"
+    return 0
+}
+
+is_oom_like_failure() {
+    local exit_code="$1"
+    local log_file="$2"
+
+    if [ "$exit_code" -eq 137 ] || [ "$exit_code" -eq 143 ]; then
+        return 0
+    fi
+    if [ -f "$log_file" ] && grep -qiE "killed|out of memory|heap out of memory|cannot allocate memory|ENOMEM|oom" "$log_file"; then
+        return 0
+    fi
+    return 1
+}
+
+npm_install_openclaw_with_fallback() {
+    local spec="openclaw@$OPENCLAW_VERSION"
+    local log1 log2 exit_code node_opts
+
+    log_step "执行 npm 回退安装..."
+    log1="$(mktemp /tmp/openclaw-npm-fallback.XXXXXX.log)"
+    set +e
+    env SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm --loglevel error --no-fund --no-audit install -g "$spec" --unsafe-perm >"$log1" 2>&1
+    exit_code=$?
+    set -e
+    if [ $exit_code -eq 0 ]; then
+        return 0
+    fi
+
+    log_warn "npm 安装失败（第 1 次，exit=$exit_code）"
+    tail -n 40 "$log1" 2>/dev/null || true
+
+    if is_oom_like_failure "$exit_code" "$log1"; then
+        log_warn "检测到疑似内存不足导致的安装失败，准备启用低内存保护后重试。"
+        ensure_swap_for_install || true
+    fi
+
+    node_opts="--max-old-space-size=512"
+    if [ -n "${NODE_OPTIONS:-}" ]; then
+        node_opts="${NODE_OPTIONS} ${node_opts}"
+    fi
+
+    log2="$(mktemp /tmp/openclaw-npm-fallback.XXXXXX.log)"
+    set +e
+    env SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm_config_jobs=1 npm_config_progress=false NODE_OPTIONS="$node_opts" npm --loglevel error --no-fund --no-audit install -g "$spec" --unsafe-perm >"$log2" 2>&1
+    exit_code=$?
+    set -e
+    if [ $exit_code -eq 0 ]; then
+        log_info "npm 低内存模式重试成功。"
+        return 0
+    fi
+
+    log_error "npm 回退安装仍然失败（第 2 次，exit=$exit_code）"
+    tail -n 80 "$log2" 2>/dev/null || true
+    echo ""
+    echo -e "${YELLOW}建议先手动启用 Swap 后重试:${NC}"
+    echo "  sudo fallocate -l 2G /swapfile.openclaw || sudo dd if=/dev/zero of=/swapfile.openclaw bs=1M count=2048"
+    echo "  sudo chmod 600 /swapfile.openclaw && sudo mkswap /swapfile.openclaw && sudo swapon /swapfile.openclaw"
+    return 1
+}
+
 resolve_openclaw_bin() {
     ensure_openclaw_on_path
 
@@ -718,13 +846,19 @@ install_openclaw() {
         fi
     fi
 
+    # 低内存机器优先补齐 Swap，降低 npm 安装被 OOM Kill 的概率
+    ensure_swap_for_install || true
+
     if ! install_openclaw_via_official; then
         if [ "$INSTALL_METHOD" != "npm" ]; then
             log_error "官方安装器执行失败，且当前为 git 安装模式，无法安全回退"
             exit 1
         fi
         log_warn "官方安装器执行失败，回退到 npm 安装"
-        npm install -g "openclaw@$OPENCLAW_VERSION" --unsafe-perm
+        if ! npm_install_openclaw_with_fallback; then
+            log_error "OpenClaw 回退安装失败"
+            exit 1
+        fi
     fi
     
     # 验证安装

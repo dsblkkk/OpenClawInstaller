@@ -19,10 +19,9 @@
 </p>
 
 <p align="center">
-  <img src="photo/dasheng-brand-logo.svg" alt="Monkey King's Wrath Brand Logo" width="320" />
+  <strong>🔥 大圣之怒傻瓜Openclaw安装&配置助手 🔥</strong><br/>
+  🔖 Version: v1.0.5
 </p>
-
-<p align="center"><strong>Dasheng Brand: Monkey King's Wrath (大圣引擎)</strong></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Version-1.0.5-blue.svg" alt="Version">
