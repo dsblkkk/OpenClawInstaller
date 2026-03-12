@@ -159,6 +159,21 @@ export OPENCLAW_OFFICIAL_INSTALL_MIRROR_URL="https://your-mirror.example.com/ope
 5. 可选启动 Gateway
 6. 可选进入配置菜单
 
+Gateway 默认监听地址已调整为：`127.0.0.1:13145`（本地回环，避免沿用常见默认端口）。
+
+如需自定义 Gateway 地址/端口，可在安装命令后追加参数：
+
+```bash
+bash install.sh --gateway-host 127.0.0.1 --gateway-port 15000
+```
+
+或使用环境变量：
+
+```bash
+export OPENCLAW_GATEWAY_HOST=127.0.0.1
+export OPENCLAW_GATEWAY_PORT=15000
+```
+
 ### 手动安装
 
 ```bash
@@ -176,7 +191,7 @@ chmod +x install.sh config-menu.sh
 
 ```bash
 # 前台调试运行
-source ~/.openclaw/env && openclaw gateway
+source ~/.openclaw/env && openclaw gateway --port "${OPENCLAW_GATEWAY_PORT:-13145}"
 
 # 后台服务运行
 openclaw gateway start

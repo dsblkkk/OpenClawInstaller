@@ -72,6 +72,8 @@ OPENCLAW_ENV="$CONFIG_DIR/env"
 OPENCLAW_JSON="$CONFIG_DIR/openclaw.json"
 BACKUP_DIR="$CONFIG_DIR/backups"
 OPENCLAW_BIN_RESOLVED=""
+DEFAULT_GATEWAY_HOST="${OPENCLAW_GATEWAY_HOST:-127.0.0.1}"
+DEFAULT_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-13145}"
 
 # 飞书插件策略（仅官方插件，支持版本 pin）
 FEISHU_PLUGIN_OFFICIAL="@openclaw/feishu"
@@ -497,8 +499,82 @@ check_openclaw_installed() {
     command -v openclaw &> /dev/null || ensure_openclaw_alias
 }
 
+is_valid_port() {
+    local p="$1"
+    [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]
+}
+
+get_gateway_port() {
+    local port="$DEFAULT_GATEWAY_PORT"
+
+    if [ -f "$OPENCLAW_ENV" ]; then
+        local env_port
+        env_port="$(grep '^export OPENCLAW_GATEWAY_PORT=' "$OPENCLAW_ENV" 2>/dev/null | tail -1 | sed 's/^export OPENCLAW_GATEWAY_PORT=//')"
+        env_port="$(echo "$env_port" | tr -d '"'\''[:space:]')"
+        if is_valid_port "$env_port"; then
+            port="$env_port"
+        fi
+    fi
+
+    if check_openclaw_installed; then
+        local cfg_port
+        cfg_port="$(openclaw config get gateway.port 2>/dev/null || true)"
+        cfg_port="$(echo "$cfg_port" | tr -d '"'\''[:space:]')"
+        if is_valid_port "$cfg_port"; then
+            port="$cfg_port"
+        fi
+    fi
+
+    echo "$port"
+}
+
+get_gateway_host() {
+    local host="$DEFAULT_GATEWAY_HOST"
+
+    if [ -f "$OPENCLAW_ENV" ]; then
+        local env_host
+        env_host="$(grep '^export OPENCLAW_GATEWAY_HOST=' "$OPENCLAW_ENV" 2>/dev/null | tail -1 | sed 's/^export OPENCLAW_GATEWAY_HOST=//')"
+        env_host="$(echo "$env_host" | tr -d '"'\''[:space:]')"
+        if [ -n "$env_host" ]; then
+            host="$env_host"
+        fi
+    fi
+
+    if check_openclaw_installed; then
+        local cfg_host
+        cfg_host="$(openclaw config get gateway.host 2>/dev/null || true)"
+        cfg_host="$(echo "$cfg_host" | tr -d '"'\''[:space:]')"
+        if [ -n "$cfg_host" ] && [ "$cfg_host" != "undefined" ]; then
+            host="$cfg_host"
+        fi
+    fi
+
+    echo "$host"
+}
+
+upsert_env_export() {
+    local key="$1"
+    local value="$2"
+    local file="$OPENCLAW_ENV"
+
+    mkdir -p "$(dirname "$file")" 2>/dev/null || true
+    touch "$file" 2>/dev/null || true
+
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk -v k="$key" -v v="$value" '
+        BEGIN { done=0 }
+        $0 ~ "^export " k "=" { print "export " k "=" v; done=1; next }
+        { print }
+        END { if (!done) print "export " k "=" v }
+    ' "$file" > "$tmp_file" && mv "$tmp_file" "$file"
+    chmod 600 "$file" 2>/dev/null || true
+}
+
 get_gateway_pid() {
-    get_port_pid 18789
+    local gateway_port
+    gateway_port="$(get_gateway_port)"
+    get_port_pid "$gateway_port"
 }
 
 get_port_pid() {
@@ -517,6 +593,8 @@ get_port_pid() {
 restart_gateway_for_channel() {
     echo ""
     log_info "正在重启 Gateway..."
+    local gateway_port
+    gateway_port="$(get_gateway_port)"
     
     # 加载环境变量
     if [ -f "$OPENCLAW_ENV" ]; then
@@ -569,9 +647,30 @@ restart_gateway_for_channel() {
         echo -e "${YELLOW}命令输出:${NC}"
         echo "$restart_output" | head -10 | sed 's/^/  /'
         echo ""
-        echo -e "${CYAN}建议:${NC}"
-        echo "  • 运行 ${WHITE}openclaw doctor --fix${NC} 修复配置问题"
-        echo "  • 运行 ${WHITE}openclaw gateway start${NC} 手动启动"
+        log_info "尝试按配置端口 ${gateway_port} 直接拉起 Gateway..."
+        if command -v setsid &> /dev/null; then
+            if [ -f "$OPENCLAW_ENV" ]; then
+                setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            else
+                setsid openclaw gateway --port "${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            fi
+        else
+            if [ -f "$OPENCLAW_ENV" ]; then
+                nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            else
+                nohup openclaw gateway --port "${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            fi
+            disown 2>/dev/null || true
+        fi
+        sleep 2
+        gateway_pid="$(get_gateway_pid)"
+        if [ -n "$gateway_pid" ]; then
+            log_info "按端口 ${gateway_port} 启动成功 (PID: $gateway_pid)"
+        else
+            echo -e "${CYAN}建议:${NC}"
+            echo "  • 运行 ${WHITE}openclaw doctor --fix${NC} 修复配置问题"
+            echo "  • 运行 ${WHITE}openclaw gateway --port ${gateway_port}${NC} 手动启动"
+        fi
     fi
 }
 
@@ -4422,13 +4521,14 @@ manage_service() {
     print_menu_item "5" "查看日志" "📋"
     print_menu_item "6" "运行诊断并修复" "🔍"
     print_menu_item "7" "安装为系统服务" "⚙️"
+    print_menu_item "9" "修改 Gateway 地址/端口" "🌐"
     echo ""
     echo -e "  ${RED}[8]${NC} 🗑️  卸载 OpenClaw"
     echo ""
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    echo -en "${YELLOW}请选择 [0-8]: ${NC}"
+    echo -en "${YELLOW}请选择 [0-9]: ${NC}"
     read choice < "$TTY_INPUT"
     
     case $choice in
@@ -4436,7 +4536,8 @@ manage_service() {
             echo ""
             if check_openclaw_installed; then
                 # 先检查服务是否已经在运行（使用端口检测，更可靠）
-                local port=18789
+                local port
+                port="$(get_gateway_port)"
                 local running_pid
                 running_pid=$(get_port_pid "$port")
                 
@@ -4524,16 +4625,16 @@ manage_service() {
                 # 后台启动 Gateway（使用 setsid 完全脱离终端）
                 if command -v setsid &> /dev/null; then
                     if [ -f "$OPENCLAW_ENV" ]; then
-                        setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
+                        setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
+                        setsid openclaw gateway --port "${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                 else
                     # 备用方案：nohup + disown
                     if [ -f "$OPENCLAW_ENV" ]; then
-                        nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
+                        nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
+                        nohup openclaw gateway --port "${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                     disown 2>/dev/null || true
                 fi
@@ -4579,7 +4680,7 @@ manage_service() {
                         tail -5 /tmp/openclaw-gateway.log 2>/dev/null | sed 's/^/  /'
                     fi
                 else
-                    log_error "启动失败，端口 18789 无服务监听"
+                    log_error "启动失败，端口 ${port} 无服务监听"
                     echo ""
                     
                     # 显示日志文件内容
@@ -4836,6 +4937,48 @@ manage_service() {
             
             press_enter
             # 卸载后返回主菜单
+            return
+            ;;
+        9)
+            echo ""
+            if ! check_openclaw_installed; then
+                log_error "OpenClaw 未安装"
+                press_enter
+                manage_service
+                return
+            fi
+
+            local current_host current_port new_host new_port
+            current_host="$(get_gateway_host)"
+            current_port="$(get_gateway_port)"
+            echo -e "${CYAN}当前 Gateway 地址: ${WHITE}${current_host}:${current_port}${NC}"
+            echo ""
+
+            read_input "${YELLOW}新 Host（默认 ${current_host}）: ${NC}" new_host
+            new_host="${new_host:-$current_host}"
+            read_input "${YELLOW}新 Port（默认 ${current_port}）: ${NC}" new_port
+            new_port="${new_port:-$current_port}"
+
+            if ! is_valid_port "$new_port"; then
+                log_error "端口无效: $new_port"
+                press_enter
+                manage_service
+                return
+            fi
+
+            openclaw config set gateway.mode local > /dev/null 2>&1 || true
+            openclaw config set gateway.host "$new_host" > /dev/null 2>&1 || true
+            openclaw config set gateway.port "$new_port" > /dev/null 2>&1 || true
+            openclaw config set gateway.bind "$new_host:$new_port" > /dev/null 2>&1 || true
+            upsert_env_export "OPENCLAW_GATEWAY_HOST" "$new_host"
+            upsert_env_export "OPENCLAW_GATEWAY_PORT" "$new_port"
+
+            log_info "Gateway 地址已更新为 ${new_host}:${new_port}"
+            if confirm "是否立即重启 Gateway 使新地址生效？" "y"; then
+                restart_gateway_for_channel
+            fi
+            press_enter
+            manage_service
             return
             ;;
         0)

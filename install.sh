@@ -77,6 +77,8 @@ INSTALLER_MIRROR_RAW_URL="${OPENCLAW_INSTALLER_MIRROR_RAW_URL:-https://mirror.gh
 OFFICIAL_INSTALL_MIRROR_URL="${OPENCLAW_OFFICIAL_INSTALL_MIRROR_URL:-}"
 CURL_CONNECT_TIMEOUT="${OPENCLAW_CURL_CONNECT_TIMEOUT:-8}"
 CURL_MAX_TIME="${OPENCLAW_CURL_MAX_TIME:-30}"
+GATEWAY_HOST="${OPENCLAW_GATEWAY_HOST:-127.0.0.1}"
+GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-13145}"
 AUTO_SWAP_ENABLE="${OPENCLAW_AUTO_SWAP:-1}"
 SWAP_THRESHOLD_MB="${OPENCLAW_SWAP_THRESHOLD_MB:-4096}"
 SWAP_TARGET_MB="${OPENCLAW_SWAP_TARGET_MB:-0}"
@@ -180,6 +182,8 @@ ${INSTALLER_NAME} (OpenClaw 安装增强版)
   --no-prompt                          非交互模式（使用默认值）
   --dry-run                            只显示执行计划，不做变更
   --verbose                            详细日志
+  --gateway-host <host>               Gateway 监听地址 (默认: 127.0.0.1)
+  --gateway-port <port>               Gateway 监听端口 (默认: 13145)
   --help, -h                           显示帮助
 
 环境变量:
@@ -196,6 +200,8 @@ ${INSTALLER_NAME} (OpenClaw 安装增强版)
   OPENCLAW_OFFICIAL_INSTALL_MIRROR_URL=<mirror_install_sh_url>
   OPENCLAW_CURL_CONNECT_TIMEOUT=<seconds>
   OPENCLAW_CURL_MAX_TIME=<seconds>
+  OPENCLAW_GATEWAY_HOST=<默认127.0.0.1>
+  OPENCLAW_GATEWAY_PORT=<默认13145>
   OPENCLAW_AUTO_SWAP=0|1
   OPENCLAW_SWAP_THRESHOLD_MB=<默认4096>
   OPENCLAW_SWAP_TARGET_MB=<默认自动(2G或4G)>
@@ -253,6 +259,14 @@ parse_args() {
             --verbose)
                 VERBOSE=1
                 shift
+                ;;
+            --gateway-host)
+                GATEWAY_HOST="$2"
+                shift 2
+                ;;
+            --gateway-port)
+                GATEWAY_PORT="$2"
+                shift 2
                 ;;
             --help|-h)
                 HELP=1
@@ -335,6 +349,17 @@ normalize_install_options() {
             OPENCLAW_VERSION="latest"
         fi
     fi
+
+    # 规范化 Gateway 地址参数，默认绑定 127.0.0.1:13145
+    if [ -z "$GATEWAY_HOST" ]; then
+        GATEWAY_HOST="127.0.0.1"
+    fi
+    if ! [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] || [ "$GATEWAY_PORT" -lt 1 ] || [ "$GATEWAY_PORT" -gt 65535 ]; then
+        log_warn "无效 gateway 端口: $GATEWAY_PORT，回退到默认 13145"
+        GATEWAY_PORT="13145"
+    fi
+    export OPENCLAW_GATEWAY_HOST="$GATEWAY_HOST"
+    export OPENCLAW_GATEWAY_PORT="$GATEWAY_PORT"
 }
 
 print_install_plan() {
@@ -347,6 +372,8 @@ print_install_plan() {
     echo "  - no_prompt: $NO_PROMPT"
     echo "  - dry_run: $DRY_RUN"
     echo "  - verbose: $VERBOSE"
+    echo "  - gateway_host: $GATEWAY_HOST"
+    echo "  - gateway_port: $GATEWAY_PORT"
     if [ "$INSTALL_METHOD" = "git" ]; then
         echo "  - git_dir: $GIT_DIR"
         echo "  - git_update: $GIT_UPDATE"
@@ -439,7 +466,7 @@ check_command() {
 }
 
 get_gateway_pid() {
-    get_port_pid 18789
+    get_port_pid "$GATEWAY_PORT"
 }
 
 get_port_pid() {
@@ -997,6 +1024,9 @@ init_openclaw_config() {
     # 设置 gateway.mode 为 local
     if check_command openclaw; then
         openclaw config set gateway.mode local 2>/dev/null || true
+        openclaw config set gateway.host "$GATEWAY_HOST" 2>/dev/null || true
+        openclaw config set gateway.port "$GATEWAY_PORT" 2>/dev/null || true
+        openclaw config set gateway.bind "$GATEWAY_HOST:$GATEWAY_PORT" 2>/dev/null || true
         log_info "Gateway 模式已设置为 local"
         
         # 检查 gateway.auth 配置，如果是 token 模式但没有 token，则自动生成
@@ -1011,6 +1041,40 @@ init_openclaw_config() {
             fi
         fi
     fi
+
+    local env_file="$OPENCLAW_DIR/env"
+    touch "$env_file" 2>/dev/null || true
+    if ! grep -q '^# Gateway runtime defaults' "$env_file" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Gateway runtime defaults"
+        } >> "$env_file"
+    fi
+    if grep -q '^export OPENCLAW_GATEWAY_HOST=' "$env_file" 2>/dev/null; then
+        local tmp_env
+        tmp_env="$(mktemp)"
+        awk -v v="$GATEWAY_HOST" '
+            BEGIN { done=0 }
+            /^export OPENCLAW_GATEWAY_HOST=/ { print "export OPENCLAW_GATEWAY_HOST=" v; done=1; next }
+            { print }
+            END { if (!done) print "export OPENCLAW_GATEWAY_HOST=" v }
+        ' "$env_file" > "$tmp_env" && mv "$tmp_env" "$env_file"
+    else
+        echo "export OPENCLAW_GATEWAY_HOST=$GATEWAY_HOST" >> "$env_file"
+    fi
+    if grep -q '^export OPENCLAW_GATEWAY_PORT=' "$env_file" 2>/dev/null; then
+        local tmp_env2
+        tmp_env2="$(mktemp)"
+        awk -v v="$GATEWAY_PORT" '
+            BEGIN { done=0 }
+            /^export OPENCLAW_GATEWAY_PORT=/ { print "export OPENCLAW_GATEWAY_PORT=" v; done=1; next }
+            { print }
+            END { if (!done) print "export OPENCLAW_GATEWAY_PORT=" v }
+        ' "$env_file" > "$tmp_env2" && mv "$tmp_env2" "$env_file"
+    else
+        echo "export OPENCLAW_GATEWAY_PORT=$GATEWAY_PORT" >> "$env_file"
+    fi
+    chmod 600 "$env_file" 2>/dev/null || true
 }
 
 # 为 MiniMax 写入官方兼容 provider 配置，避免旧版本出现 Unknown model
@@ -1179,6 +1243,9 @@ EOF
             echo "export OPENCODE_API_KEY=$AI_KEY" >> "$env_file"
             ;;
     esac
+
+    echo "export OPENCLAW_GATEWAY_HOST=$GATEWAY_HOST" >> "$env_file"
+    echo "export OPENCLAW_GATEWAY_PORT=$GATEWAY_PORT" >> "$env_file"
     
     chmod 600 "$env_file"
     log_info "环境变量配置已保存到: $env_file"
@@ -2409,16 +2476,16 @@ start_openclaw_service() {
     
     if command -v setsid &> /dev/null; then
         if [ -f "$env_file" ]; then
-            setsid bash -c "source $env_file && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
+            setsid bash -c "source $env_file && exec openclaw gateway --port ${GATEWAY_PORT}" > /tmp/openclaw-gateway.log 2>&1 &
         else
-            setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
+            setsid openclaw gateway --port "${GATEWAY_PORT}" > /tmp/openclaw-gateway.log 2>&1 &
         fi
     else
         # 备用方案：nohup + disown
         if [ -f "$env_file" ]; then
-            nohup bash -c "source $env_file && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
+            nohup bash -c "source $env_file && exec openclaw gateway --port ${GATEWAY_PORT}" > /tmp/openclaw-gateway.log 2>&1 &
         else
-            nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
+            nohup openclaw gateway --port "${GATEWAY_PORT}" > /tmp/openclaw-gateway.log 2>&1 &
         fi
         disown 2>/dev/null || true
     fi
@@ -2444,7 +2511,7 @@ start_openclaw_service() {
         log_error "Gateway 启动失败"
         echo ""
         echo -e "${YELLOW}请查看日志: tail -f /tmp/openclaw-gateway.log${NC}"
-        echo -e "${YELLOW}或手动启动: source ~/.openclaw/env && openclaw gateway${NC}"
+        echo -e "${YELLOW}或手动启动: source ~/.openclaw/env && openclaw gateway --port ${GATEWAY_PORT}${NC}"
     fi
 }
 
@@ -2568,7 +2635,7 @@ main() {
     else
         echo ""
         echo -e "${CYAN}稍后可以通过以下命令启动服务:${NC}"
-        echo "  source ~/.openclaw/env && openclaw gateway"
+        echo "  source ~/.openclaw/env && openclaw gateway --port ${GATEWAY_PORT}"
         echo ""
     fi
     
